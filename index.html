@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GALIMUN - Sistema de Puntuación</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const { Plus, Minus, AlertCircle, Users, TrendingUp, Shield, DollarSign, Scale, Folder, Save, Upload, X, ChevronDown, ChevronRight } = lucide;
+
+        const GalimunTracker = () => {
+          // Login removido - acceso directo
+          
+          // Estados principales
+          const [countries, setCountries] = useState([
+            {
+              id: 1,
+              name: 'País Ejemplo',
+              groupId: null,
+              basePoints: { military: 10, economic: 10, diplomatic: 10, legitimacy: 8 },
+              temporaryPoints: { military: 0, economic: 0, diplomatic: 0, legitimacy: 0 },
+              permanentMods: { military: 0, economic: 0, diplomatic: 0, legitimacy: 0 }
+            }
+          ]);
+          
+          const [groups, setGroups] = useState([]);
+          const [collapsedGroups, setCollapsedGroups] = useState({});
+          const [structuralMods, setStructuralMods] = useState({
+            military: 0,
+            economic: 0,
+            diplomatic: 0,
+            legitimacy: 0
+          });
+          
+          const [selectedCountry, setSelectedCountry] = useState(null);
+          const [showActionPanel, setShowActionPanel] = useState(false);
+          const [cycleCount, setCycleCount] = useState(1);
+          const [viewMode, setViewMode] = useState('compact');
+
+          // PERSISTENCIA DE DATOS
+          useEffect(() => {
+            const savedData = localStorage.getItem('galimun_data');
+            if (savedData) {
+              try {
+                const parsed = JSON.parse(savedData);
+                setCountries(parsed.countries || []);
+                setGroups(parsed.groups || []);
+                setStructuralMods(parsed.structuralMods || {});
+                setCycleCount(parsed.cycleCount || 1);
+              } catch (e) {
+                console.error('Error loading data:', e);
+              }
+            }
+          }, []);
+
+          const saveData = () => {
+            const dataToSave = {
+              countries,
+              groups,
+              structuralMods,
+              cycleCount,
+              lastSaved: new Date().toISOString()
+            };
+            localStorage.setItem('galimun_data', JSON.stringify(dataToSave));
+            alert('✓ Datos guardados correctamente');
+          };
+
+          const exportData = () => {
+            const dataToSave = {
+              countries,
+              groups,
+              structuralMods,
+              cycleCount,
+              exportDate: new Date().toISOString()
+            };
+            const blob = new Blob([JSON.stringify(dataToSave, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `galimun_backup_${new Date().toISOString().slice(0,10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+          };
+
+          const importData = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              try {
+                const imported = JSON.parse(e.target.result);
+                if (confirm('¿Importar estos datos? Esto reemplazará los datos actuales.')) {
+                  setCountries(imported.countries || []);
+                  setGroups(imported.groups || []);
+                  setStructuralMods(imported.structuralMods || {});
+                  setCycleCount(imported.cycleCount || 1);
+                  alert('✓ Datos importados correctamente');
+                }
+              } catch (error) {
+                alert('Error al importar: archivo no válido');
+              }
+            };
+            reader.readAsText(file);
+            event.target.value = '';
+          };
+
+          // Calcular puntos efectivos
+          const calculateEffective = (country) => {
+            const result = {};
+            ['military', 'economic', 'diplomatic', 'legitimacy'].forEach(type => {
+              result[type] = country.basePoints[type] + 
+                             country.temporaryPoints[type] + 
+                             country.permanentMods[type] + 
+                             structuralMods[type];
+            });
+            return result;
+          };
+
+          // Obtener restricciones
+          const getRestrictions = (effective) => {
+            const restrictions = [];
+            if (effective.legitimacy < 3) restrictions.push('No puede condenar a nadie');
+            if (effective.economic < 4) restrictions.push('No puede montar ofensivas');
+            if (effective.diplomatic < 3) restrictions.push('No puede hacer alianzas');
+            if (effective.military < 4) restrictions.push('No puede reforzar fronteras');
+            if (effective.legitimacy < 0) restrictions.push('⚠️ PELIGRO: No permite acciones de represión');
+            return restrictions;
+          };
+
+          // Acciones disponibles
+          const actions = {
+            military: [
+              { name: 'Escaramuza limitada', costs: { military: -3, economic: -1 }, max: 4 },
+              { name: 'Operación encubierta', costs: { military: -4, diplomatic: -2 }, max: 5 },
+              { name: 'Ofensiva mayor', costs: { military: -8, economic: -4, legitimacy: -1 }, max: 12 },
+              { name: 'Defensa total', costs: { military: -6, economic: -2, diplomatic: -1 }, max: 8 },
+              { name: 'Intervención extranjera', costs: { military: -8, economic: -5, diplomatic: -2, legitimacy: -2 }, special: true }
+            ],
+            diplomatic: [
+              { name: 'Alianza básica', costs: { diplomatic: -3, legitimacy: -1 }, req: { legitimacy: 5 } },
+              { name: 'Condena internacional', costs: { diplomatic: -5, legitimacy: -2 }, req: { legitimacy: 6 } },
+              { name: 'Evitar sanciones', costs: { diplomatic: -6, economic: -2 }, req: { diplomatic: 8 } },
+              { name: 'Mediación neutral', costs: { diplomatic: -4, legitimacy: -2 } },
+              { name: 'Coalición multilateral', costs: { diplomatic: -8, economic: -4, legitimacy: -2 }, special: true }
+            ],
+            economic: [
+              { name: 'Subvención interna', costs: { economic: -3, legitimacy: -1 }, max: 4 },
+              { name: 'Compra de armamento', costs: { economic: -4, military: -2 }, max: 6 },
+              { name: 'Estímulo económico', costs: { economic: -8, legitimacy: -2 }, max: 8 },
+              { name: 'Evitar sanciones (econ)', costs: { economic: -6, diplomatic: -3 }, max: 6 },
+              { name: 'Embargo económico', costs: { economic: -4, diplomatic: -3 }, req: { legitimacy: 4 } }
+            ],
+            legitimacy: [
+              { name: 'Campaña interna', costs: { economic: -2, diplomatic: -1 }, gain: { legitimacy: 2 }, maxCycle: 2 },
+              { name: 'Reforma democrática', costs: { legitimacy: -4, diplomatic: -2 }, special: true },
+              { name: 'Represión controlada', costs: { military: -2, legitimacy: -1 }, req: { legitimacy: 4 } },
+              { name: 'Evento internacional', costs: { economic: -6, diplomatic: -4, legitimacy: -3 }, maxCycle: 1 },
+              { name: 'Investigación DDHH', costs: { diplomatic: -4, legitimacy: -3 }, req: { legitimacy: 5 } }
+            ]
+          };
+
+          // GESTIÓN DE GRUPOS
+          const addGroup = () => {
+            const name = prompt('Nombre del grupo (ej: OTAN, Eje, Neutrales):');
+            if (!name) return;
+            const color = prompt('Color del grupo (ej: blue, red, green, purple, amber):') || 'blue';
+            setGroups([...groups, { id: Date.now(), name, color }]);
+          };
+
+          const deleteGroup = (groupId) => {
+            if (confirm('¿Eliminar este grupo? Los países se quedarán sin grupo.')) {
+              setGroups(groups.filter(g => g.id !== groupId));
+              setCountries(countries.map(c => 
+                c.groupId === groupId ? { ...c, groupId: null } : c
+              ));
+            }
+          };
+
+          const assignToGroup = (countryId, groupId) => {
+            setCountries(countries.map(c => 
+              c.id === countryId ? { ...c, groupId } : c
+            ));
+          };
+
+          const toggleGroupCollapse = (groupId) => {
+            setCollapsedGroups({
+              ...collapsedGroups,
+              [groupId]: !collapsedGroups[groupId]
+            });
+          };
+
+          // Añadir país
+          const addCountry = () => {
+            const name = prompt('Nombre del país:');
+            if (!name) return;
+            
+            const newCountry = {
+              id: Date.now(),
+              name,
+              groupId: null,
+              basePoints: { 
+                military: parseInt(prompt('Puntos Militares Base:', '10')) || 10,
+                economic: parseInt(prompt('Puntos Económicos Base:', '10')) || 10,
+                diplomatic: parseInt(prompt('Puntos Diplomáticos Base:', '10')) || 10,
+                legitimacy: parseInt(prompt('Puntos Legitimidad Base:', '8')) || 8
+              },
+              temporaryPoints: { military: 0, economic: 0, diplomatic: 0, legitimacy: 0 },
+              permanentMods: { military: 0, economic: 0, diplomatic: 0, legitimacy: 0 }
+            };
+            setCountries([...countries, newCountry]);
+          };
+
+          // Ejecutar acción
+          const executeAction = (action) => {
+            if (!selectedCountry) {
+              alert('Primero selecciona un país');
+              return;
+            }
+            
+            const country = countries.find(c => c.id === selectedCountry);
+            const effective = calculateEffective(country);
+            
+            if (action.req) {
+              for (let [type, min] of Object.entries(action.req)) {
+                if (effective[type] < min) {
+                  alert(`Requisito no cumplido: ${type} debe ser ≥ ${min} (actual: ${effective[type]})`);
+                  return;
+                }
+              }
+            }
+            
+            const newTemp = { ...country.temporaryPoints };
+            
+            for (let [type, cost] of Object.entries(action.costs)) {
+              const afterAction = effective[type] + cost;
+              if (afterAction < 0) {
+                alert(`Puntos insuficientes en ${type}. Necesitas ${Math.abs(afterAction)} puntos más.`);
+                return;
+              }
+              newTemp[type] += cost;
+            }
+            
+            if (action.gain) {
+              for (let [type, gain] of Object.entries(action.gain)) {
+                newTemp[type] += gain;
+              }
+            }
+            
+            setCountries(countries.map(c => 
+              c.id === selectedCountry ? { ...c, temporaryPoints: newTemp } : c
+            ));
+            alert(`✓ Acción ejecutada: ${action.name}`);
+          };
+
+          // Resetear ciclo
+          const resetCycle = () => {
+            if (confirm('¿Resetear puntos temporales de todos los países?')) {
+              setCountries(countries.map(c => ({
+                ...c,
+                temporaryPoints: { military: 0, economic: 0, diplomatic: 0, legitimacy: 0 }
+              })));
+              setCycleCount(cycleCount + 1);
+            }
+          };
+
+          // Modificar puntos
+          const modifyPoints = (countryId, type, category, amount) => {
+            setCountries(countries.map(c => {
+              if (c.id === countryId) {
+                return {
+                  ...c,
+                  [category]: {
+                    ...c[category],
+                    [type]: c[category][type] + amount
+                  }
+                };
+              }
+              return c;
+            }));
+          };
+
+          const pointIcons = {
+            military: Shield,
+            economic: DollarSign,
+            diplomatic: Users,
+            legitimacy: Scale
+          };
+
+          const pointColors = {
+            military: 'from-red-600 to-red-800',
+            economic: 'from-emerald-600 to-emerald-800',
+            diplomatic: 'from-blue-600 to-blue-800',
+            legitimacy: 'from-amber-600 to-amber-800'
+          };
+
+          // Renderizar país según vista
+          const renderCountryCard = (country, idx) => {
+            const effective = calculateEffective(country);
+            const restrictions = getRestrictions(effective);
+            const group = groups.find(g => g.id === country.groupId);
+
+            if (viewMode === 'compact') {
+              return (
+                <div 
+                  key={country.id}
+                  className={`bg-slate-800/70 backdrop-blur border-2 rounded-lg p-4 hover:border-amber-500/50 transition-all cursor-pointer ${
+                    group ? `border-${group.color}-500/50` : 'border-slate-700'
+                  } ${selectedCountry === country.id ? 'ring-2 ring-amber-500' : ''}`}
+                  onClick={() => setSelectedCountry(selectedCountry === country.id ? null : country.id)}
+                >
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                      {selectedCountry === country.id && (
+                        <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></div>
+                      )}
+                      <div>
+                        <h3 className="font-bold text-lg">{country.name}</h3>
+                        {group && (
+                          <span className={`text-xs px-2 py-0.5 rounded bg-${group.color}-500/20 text-${group.color}-300`}>
+                            {group.name}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      {Object.entries(effective).map(([type, value]) => {
+                        const Icon = pointIcons[type];
+                        return (
+                          <div key={type} className="flex items-center gap-1">
+                            <Icon className="w-4 h-4 text-slate-400" />
+                            <span className="font-bold mono">{value}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {restrictions.length > 0 && (
+                    <div className="mt-2 text-xs text-red-400 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      <span>{restrictions.length} restricción(es)</span>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            if (viewMode === 'grid') {
+              return (
+                <div 
+                  key={country.id}
+                  className={`bg-slate-800/70 backdrop-blur border-2 rounded-xl p-4 hover:border-amber-500/50 transition-all cursor-pointer ${
+                    group ? `border-${group.color}-500/50` : 'border-slate-700'
+                  } ${selectedCountry === country.id ? 'ring-2 ring-amber-500' : ''}`}
+                  onClick={() => setSelectedCountry(selectedCountry === country.id ? null : country.id)}
+                >
+                  <h3 className="font-bold text-xl mb-2">{country.name}</h3>
+                  {group && (
+                    <span className={`text-xs px-2 py-1 rounded bg-${group.color}-500/20 text-${group.color}-300 inline-block mb-3`}>
+                      {group.name}
+                    </span>
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    {Object.entries(effective).map(([type, value]) => {
+                      const Icon = pointIcons[type];
+                      return (
+                        <div key={type} className={`bg-gradient-to-br ${pointColors[type]} rounded-lg p-3`}>
+                          <Icon className="w-4 h-4 mb-1" />
+                          <div className="text-2xl font-bold mono">{value}</div>
+                          <div className="text-xs opacity-75 capitalize">{type.slice(0, 3)}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            }
+
+            // Detailed view (original)
+            return (
+              <div 
+                key={country.id} 
+                className={`bg-slate-800/70 backdrop-blur border-2 rounded-xl p-6 hover:border-amber-500/50 transition-all ${
+                  group ? `border-${group.color}-500/50` : 'border-slate-700'
+                }`}
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h2 className="text-3xl font-bold mb-1">{country.name}</h2>
+                    {group && (
+                      <span className={`text-sm px-3 py-1 rounded-full bg-${group.color}-500/20 text-${group.color}-300 inline-block mb-2`}>
+                        {group.name}
+                      </span>
+                    )}
+                    <button
+                      onClick={() => setSelectedCountry(selectedCountry === country.id ? null : country.id)}
+                      className={`text-sm px-3 py-1 rounded-full transition-colors ${
+                        selectedCountry === country.id 
+                          ? 'bg-amber-600 text-white' 
+                          : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                      }`}
+                    >
+                      {selectedCountry === country.id ? '✓ Seleccionado' : 'Seleccionar'}
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <select
+                      value={country.groupId || ''}
+                      onChange={(e) => assignToGroup(country.id, e.target.value ? parseInt(e.target.value) : null)}
+                      className="bg-slate-700 text-sm px-2 py-1 rounded"
+                    >
+                      <option value="">Sin grupo</option>
+                      {groups.map(g => (
+                        <option key={g.id} value={g.id}>{g.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => {
+                        if (confirm(`¿Eliminar ${country.name}?`)) {
+                          setCountries(countries.filter(c => c.id !== country.id));
+                          if (selectedCountry === country.id) setSelectedCountry(null);
+                        }
+                      }}
+                      className="text-red-400 hover:text-red-300 text-sm font-semibold"
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  {Object.entries(effective).map(([type, value]) => {
+                    const Icon = pointIcons[type];
+                    const temp = country.temporaryPoints[type];
+                    const perm = country.permanentMods[type];
+                    
+                    return (
+                      <div key={type} className={`bg-gradient-to-br ${pointColors[type]} rounded-lg p-4 shadow-lg`}>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Icon className="w-4 h-4" />
+                          <span className="text-xs uppercase font-semibold tracking-wider opacity-90">
+                            {type.slice(0, 3)}
+                          </span>
+                        </div>
+                        <div className="text-3xl font-bold mono mb-1">{value}</div>
+                        <div className="text-xs opacity-75">
+                          Base: {country.basePoints[type]}
+                          {perm !== 0 && ` | Perm: ${perm >= 0 ? '+' : ''}${perm}`}
+                          {temp !== 0 && ` | Temp: ${temp >= 0 ? '+' : ''}${temp}`}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {restrictions.length > 0 && (
+                  <div className="bg-red-900/30 border border-red-500/50 rounded-lg p-3 mb-4">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-red-300 mb-1">Restricciones activas:</p>
+                        <ul className="text-sm text-red-200 space-y-1">
+                          {restrictions.map((r, i) => <li key={i}>• {r}</li>)}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <details className="mt-4">
+                  <summary className="cursor-pointer text-sm text-slate-400 hover:text-slate-300 font-semibold">
+                    Modificar Puntos ▼
+                  </summary>
+                  <div className="mt-3 space-y-2">
+                    {['military', 'economic', 'diplomatic', 'legitimacy'].map(type => (
+                      <div key={type} className="flex items-center gap-2 text-sm">
+                        <span className="w-24 capitalize">{type}:</span>
+                        <button
+                          onClick={() => modifyPoints(country.id, type, 'basePoints', -1)}
+                          className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded"
+                        >Base -</button>
+                        <button
+                          onClick={() => modifyPoints(country.id, type, 'basePoints', 1)}
+                          className="px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded"
+                        >Base +</button>
+                        <button
+                          onClick={() => modifyPoints(country.id, type, 'permanentMods', -1)}
+                          className="px-2 py-1 bg-amber-700 hover:bg-amber-600 rounded"
+                        >Perm -</button>
+                        <button
+                          onClick={() => modifyPoints(country.id, type, 'permanentMods', 1)}
+                          className="px-2 py-1 bg-amber-700 hover:bg-amber-600 rounded"
+                        >Perm +</button>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              </div>
+            );
+          };
+
+          // Pantalla de login removida - acceso directo
+
+          // PANTALLA PRINCIPAL
+          const ungroupedCountries = countries.filter(c => !c.groupId);
+
+          return (
+            <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-slate-100 p-6">
+              <style>{`
+                @import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:wght@400;600;700&family=Space+Mono:wght@400;700&display=swap');
+                
+                * {
+                  font-family: 'Crimson Pro', serif;
+                }
+                
+                .mono {
+                  font-family: 'Space Mono', monospace;
+                }
+              `}</style>
+
+              {/* Header */}
+              <div className="max-w-7xl mx-auto mb-8">
+                <div className="border-b-4 border-amber-500 pb-6">
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <h1 className="text-6xl font-bold mb-2 tracking-tight">GALIMUN</h1>
+                      <p className="text-xl text-slate-400 mono">Sistema de Puntuación - Ciclo {cycleCount}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={saveData}
+                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                      >
+                        <Save className="w-4 h-4" /> Guardar
+                      </button>
+                      <button
+                        onClick={exportData}
+                        className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                      >
+                        <Upload className="w-4 h-4" /> Exportar
+                      </button>
+                      <label className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-lg text-sm font-semibold transition-colors cursor-pointer">
+                        <Upload className="w-4 h-4" /> Importar
+                        <input type="file" accept=".json" onChange={importData} className="hidden" />
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Modificadores Estructurales */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    {Object.entries(structuralMods).map(([type, value]) => {
+                      const Icon = pointIcons[type];
+                      return (
+                        <div key={type} className="bg-slate-800/50 backdrop-blur border border-slate-700 rounded-lg p-4">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Icon className="w-5 h-5" />
+                            <span className="text-sm uppercase tracking-wider text-slate-400">{type}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button 
+                              onClick={() => setStructuralMods({...structuralMods, [type]: value - 1})}
+                              className="w-8 h-8 bg-red-600/20 hover:bg-red-600/40 rounded transition-colors flex items-center justify-center"
+                            >
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            <span className="text-2xl font-bold mono flex-1 text-center">{value >= 0 ? '+' : ''}{value}</span>
+                            <button 
+                              onClick={() => setStructuralMods({...structuralMods, [type]: value + 1})}
+                              className="w-8 h-8 bg-emerald-600/20 hover:bg-emerald-600/40 rounded transition-colors flex items-center justify-center"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+                          <p className="text-xs text-slate-500 mt-2 text-center">Modificador Estructural</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Botones de control */}
+                  <div className="flex gap-4 flex-wrap items-center">
+                    <button 
+                      onClick={addCountry}
+                      className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-semibold transition-colors"
+                    >
+                      <Plus className="w-5 h-5" /> Añadir País
+                    </button>
+                    <button 
+                      onClick={addGroup}
+                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 px-6 py-3 rounded-lg font-semibold transition-colors"
+                    >
+                      <Folder className="w-5 h-5" /> Crear Grupo
+                    </button>
+                    <button 
+                      onClick={resetCycle}
+                      className="flex items-center gap-2 bg-amber-600 hover:bg-amber-700 px-6 py-3 rounded-lg font-semibold transition-colors"
+                    >
+                      <TrendingUp className="w-5 h-5" /> Nuevo Ciclo
+                    </button>
+                    <button 
+                      onClick={() => setShowActionPanel(!showActionPanel)}
+                      className="flex items-center gap-2 bg-purple-600 hover:bg-purple-700 px-6 py-3 rounded-lg font-semibold transition-colors"
+                    >
+                      {showActionPanel ? 'Ocultar' : 'Mostrar'} Acciones
+                    </button>
+                    
+                    <div className="ml-auto flex gap-2">
+                      <button
+                        onClick={() => setViewMode('compact')}
+                        className={`px-4 py-2 rounded-lg font-semibold transition-colors ${
+                          viewMode === 'compact' ? 'bg-slate-600' : 'bg-slate-700 hover:bg-slate-600'
+                        }`}
+                      >
+                        Compacto
+                      </button>
+                      <button
+                        onClick={() => setViewMode('grid')}
+                        className={`px-4 py-2 rounded-lg font-semibold transition-colors ${
+                          viewMode === 'grid' ? 'bg-slate-600' : 'bg-slate-700 hover:bg-slate-600'
+                        }`}
+                      >
+                        Cuadrícula
+                      </button>
+                      <button
+                        onClick={() => setViewMode('detailed')}
+                        className={`px-4 py-2 rounded-lg font-semibold transition-colors ${
+                          viewMode === 'detailed' ? 'bg-slate-600' : 'bg-slate-700 hover:bg-slate-600'
+                        }`}
+                      >
+                        Detallado
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Lista de Países */}
+                <div className="lg:col-span-2 space-y-6">
+                  {/* Grupos */}
+                  {groups.map(group => {
+                    const groupCountries = countries.filter(c => c.groupId === group.id);
+                    if (groupCountries.length === 0) return null;
+                    const isCollapsed = collapsedGroups[group.id];
+                    
+                    return (
+                      <div key={group.id} className={`bg-slate-800/50 border-2 border-${group.color}-500/50 rounded-xl p-4`}>
+                        <div className="flex justify-between items-center mb-4">
+                          <button
+                            onClick={() => toggleGroupCollapse(group.id)}
+                            className="flex items-center gap-2 text-2xl font-bold hover:text-amber-400 transition-colors"
+                          >
+                            {isCollapsed ? <ChevronRight className="w-6 h-6" /> : <ChevronDown className="w-6 h-6" />}
+                            {group.name}
+                            <span className={`text-sm px-3 py-1 rounded-full bg-${group.color}-500/20 text-${group.color}-300`}>
+                              {groupCountries.length} países
+                            </span>
+                          </button>
+                          <button
+                            onClick={() => deleteGroup(group.id)}
+                            className="text-red-400 hover:text-red-300 text-sm"
+                          >
+                            <X className="w-5 h-5" />
+                          </button>
+                        </div>
+                        
+                        {!isCollapsed && (
+                          <div className={viewMode === 'grid' ? 'grid grid-cols-2 gap-4' : 'space-y-3'}>
+                            {groupCountries.map((country, idx) => renderCountryCard(country, idx))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {/* Países sin grupo */}
+                  {ungroupedCountries.length > 0 && (
+                    <div className="bg-slate-800/50 border-2 border-slate-700 rounded-xl p-4">
+                      <h2 className="text-2xl font-bold mb-4 text-slate-400">Sin Grupo ({ungroupedCountries.length})</h2>
+                      <div className={viewMode === 'grid' ? 'grid grid-cols-2 gap-4' : 'space-y-3'}>
+                        {ungroupedCountries.map((country, idx) => renderCountryCard(country, idx))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Panel de Acciones */}
+                {showActionPanel && (
+                  <div className="lg:col-span-1">
+                    <div className="bg-slate-800/70 backdrop-blur border-2 border-purple-500/50 rounded-xl p-6 sticky top-6">
+                      <h3 className="text-2xl font-bold mb-4 flex items-center gap-2">
+                        <span className="w-3 h-3 bg-purple-500 rounded-full animate-pulse"></span>
+                        Panel de Acciones
+                      </h3>
+                      
+                      {!selectedCountry ? (
+                        <p className="text-slate-400 text-sm">Selecciona un país para ver las acciones disponibles</p>
+                      ) : (
+                        <div className="space-y-4">
+                          {Object.entries(actions).map(([category, categoryActions]) => (
+                            <details key={category} className="group">
+                              <summary className="cursor-pointer font-semibold text-lg capitalize mb-2 hover:text-amber-400 transition-colors">
+                                {category} ▸
+                              </summary>
+                              <div className="space-y-2 pl-2">
+                                {categoryActions.map((action, idx) => (
+                                  <button
+                                    key={idx}
+                                    onClick={() => executeAction(action)}
+                                    className="w-full text-left p-3 bg-slate-700/50 hover:bg-slate-700 rounded-lg transition-colors group"
+                                  >
+                                    <div className="font-semibold text-sm mb-1 group-hover:text-amber-400 transition-colors">
+                                      {action.name}
+                                    </div>
+                                    <div className="text-xs text-slate-400">
+                                      {Object.entries(action.costs).map(([type, cost]) => (
+                                        <span key={type} className="mr-2">
+                                          {type.slice(0,3)}: {cost}
+                                        </span>
+                                      ))}
+                                    </div>
+                                    {action.special && (
+                                      <div className="text-xs text-amber-400 mt-1">⚡ Especial</div>
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
+                            </details>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<GalimunTracker />);
+    </script>
+</body>
+</html>
